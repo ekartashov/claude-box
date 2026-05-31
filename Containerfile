@@ -36,10 +36,8 @@ RUN mkdir -p /home/node/.claude/plugins/cache \
              /home/node/.claude/projects \
              /home/node/.claude/cache \
              /home/node/.claude/backups \
-    && chown -R node:node /home/node/.claude
-
-# Switch to the pre-existing 'node' user (UID 1000)
-USER node
+    && chmod -R 777 /home/node/.claude \
+    && chmod 777 /home/node
 
 # Set the Home environment variable explicitly
 ENV HOME=/home/node
