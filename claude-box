@@ -123,7 +123,7 @@ do_migrate() {
         --group-add keep-groups \
         --annotation run.oci.keep_original_groups=1 \
         -v "claude-data:/source:ro,Z" \
-        -v "$CLAUDE_DIR:/target:Z" \
+        -v "$CLAUDE_DIR:/target:z" \
         --entrypoint /bin/bash \
         "$CLAUDE_BOX_IMAGE" \
         -c 'cp -a /source/.claude/. /target/ 2>/dev/null; echo "Migration complete"'
@@ -139,8 +139,8 @@ do_shell() {
         --group-add keep-groups \
         --annotation run.oci.keep_original_groups=1 \
         --security-opt no-new-privileges \
-        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z" \
-        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z" \
+        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:z" \
+        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:z" \
         -v "$PWD:$PWD:rw,z" \
         "${EXTRA_MOUNT_ARGS[@]}" \
         -e "HOME=$CONTAINER_HOME" \
@@ -170,8 +170,8 @@ run_claude() {
         --group-add keep-groups
         --annotation run.oci.keep_original_groups=1
         --security-opt no-new-privileges
-        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z"
-        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z"
+        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:z"
+        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:z"
         -v "$host_cwd:$host_cwd:rw,z"
         "${EXTRA_MOUNT_ARGS[@]}"
         -e "HOME=$CONTAINER_HOME"
@@ -204,8 +204,8 @@ main() {
                 --userns=keep-id \
                 --group-add keep-groups \
                 --annotation run.oci.keep_original_groups=1 \
-                -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z" \
-                -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z" \
+                -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:z" \
+                -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:z" \
                 -e "HOME=$CONTAINER_HOME" \
                 "$CLAUDE_BOX_IMAGE" --version
             exit
