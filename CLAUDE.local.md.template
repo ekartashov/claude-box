@@ -1,0 +1,51 @@
+# Local Claude Launcher Guidelines
+
+For this project, Claude Code runs inside a rootless Podman sandboxed container using the `claude-box` wrapper, rather than directly on the host system.
+
+## Architecture and Behavior
+
+- **IDE Agnostic:** This setup works seamlessly across interactive terminal sessions, agentic tools (like Antigravity), and editor extensions (like the VSCodium Claude Code extension).
+- **Exact Path Mounting:** The host current working directory (CWD) is mounted to the *exact same path* inside the container (`-v "$PWD:$PWD"`). There is no artificial `/workspace` path. You should use standard relative or absolute paths as they correspond 1:1 with the host.
+- **Shared State:** Your Claude state (`~/.claude/` directory and `~/.claude.json`) is symmetrically mapped between the host and the container. This ensures that session history, project configurations, and authentications match perfectly between the host ecosystem and the sandbox environment.
+
+## Guardrails & Assumptions
+
+- **Environment Isolation:** Host-global tools, shells, configurations, and dotfiles might not be available inside the sandbox unless they are specifically installed in the `claude-sandbox` container image.
+- **Path Restrictions:** Do not attempt to access directories outside of the currently mounted project directory or the mapped `~/.claude` directories.
+
+## Available in the claude-sandbox image
+
+Confirmed present after Containerfile update:
+- Python 3.11.x (`/usr/bin/python3`) with: `pydantic`, `httpx`, `pyyaml`, `rich`, `openai`, `ruff`, `pytest`
+- `ripgrep` (`rg`) — fast file search
+- `jq` — JSON processing
+- `git` — version control
+- `curl` — HTTP requests
+- `build-essential` — gcc, make, etc.
+
+NOT available (intentionally absent):
+- `podman`, `docker`, `docker-compose`, `podman-compose` — host-only
+- `nvidia-smi`, CUDA tooling, `nvcc` — GPU is host-side only
+- `pyenv`, host venvs — not mounted
+- `just` — justfile targets invoke deploy scripts that need podman; kept absent so failures are explicit
+- `wget` — use `curl`
+- Network access to vLLM endpoints (ports 30000–30002 are host-side only, not reachable from inside the container)
+
+## Writable shared state
+
+Because `~/.claude/` is symmetrically mounted between host and container, Claude Code can read and write:
+- `.claude/commands/` — slash commands, take effect immediately
+- `.claude/skills/` — reusable skill files
+- `~/.claude.json` — MCP server configuration
+
+Changes to these files are live on the host as soon as they are written.
+
+## IDE Integration Details
+
+If you are setting this up for a VSCodium or VS Code extension, set the wrapper in your `settings.json`:
+```json
+{
+  "claudeCode.claudeProcessWrapper": "/home/<user>/.local/bin/claude-box"
+}
+```
+The wrapper is designed to automatically intercept execution calls from the extension, discard the host's native binary path, and use the containerized execution environment instead.

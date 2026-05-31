@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# claude-box — Rootless Podman wrapper for Claude Code
+#
+# Runs Claude Code inside a sandboxed container while:
+#   • Sharing ~/.claude/ AND ~/.claude.json with the host so the VSCodium
+#     extension and the container see the same sessions, auth, and config
+#   • Mounting the real host CWD path inside the container so project session
+#     keys match between the extension and the container
+#   • Working both interactively (terminal) and non-interactively (VSCodium pipe)
+#
+set -euo pipefail
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+CLAUDE_BOX_IMAGE="${CLAUDE_BOX_IMAGE:-claude-sandbox:latest}"
+CONTAINER_HOME="/home/node"
+
+# Two host paths that Claude Code uses:
+#   ~/.claude/       — directory with sessions, projects, plugins, etc.
+#   ~/.claude.json   — config file with auth tokens, project metadata, etc.
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+CLAUDE_JSON="${CLAUDE_JSON:-$HOME/.claude.json}"
+
+# Optional extra volume mounts (space-separated)
+# e.g., CLAUDE_BOX_MOUNTS="/var/log:/var/log:ro,z /opt:/opt:rw,z"
+CLAUDE_BOX_MOUNTS="${CLAUDE_BOX_MOUNTS:-}"
+
+declare -a EXTRA_MOUNT_ARGS=()
+if [[ -n "$CLAUDE_BOX_MOUNTS" ]]; then
+    read -ra __mounts <<< "$CLAUDE_BOX_MOUNTS"
+    for __mnt in "${__mounts[@]}"; do
+        EXTRA_MOUNT_ARGS+=("-v" "$__mnt")
+    done
+fi
+
+# ─── Helper Functions ─────────────────────────────────────────────────────────
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[1;34m→\033[0m %s\n' "$*" >&2; }
+
+show_help() {
+    cat <<'EOF'
+claude-box — Run Claude Code in a rootless Podman sandbox
+
+USAGE
+    claude-box [OPTIONS] [-- CLAUDE_ARGS...]
+    claude-box <native-binary-path> [CLAUDE_ARGS...]   (VSCodium wrapper mode)
+
+OPTIONS
+    --help          Show this help
+    --build         Build (or rebuild) the container image
+    --update        Rebuild without cache (pulls latest Claude Code)
+    --shell         Open a bash shell inside the container (debug)
+    --version       Show Claude Code version inside the container
+    --migrate       Migrate data from old claude-data volume
+
+ENVIRONMENT
+    CLAUDE_BOX_IMAGE    Container image name    (default: claude-sandbox:latest)
+    CLAUDE_DIR          Host .claude directory   (default: ~/.claude)
+    CLAUDE_JSON         Host .claude.json file   (default: ~/.claude.json)
+    CLAUDE_BOX_MOUNTS   Extra volume mounts      (default: none, e.g. "/path:/path:rw,z")
+
+EXAMPLES
+    claude-box                  # Interactive session in current project
+    claude-box -c               # Continue last session
+    claude-box -r               # Resume picker
+    claude-box -p "fix tests"   # One-shot prompt
+    claude-box --build          # Build the container image
+    claude-box --update         # Update Claude Code to latest
+
+VSCodium INTEGRATION
+    Set in VSCodium settings.json:
+      "claudeCode.claudeProcessWrapper": "/home/<user>/.local/bin/claude-box"
+EOF
+    exit 0
+}
+
+# ─── Ensure host persistence paths exist ──────────────────────────────────────
+ensure_host_dirs() {
+    mkdir -p "$CLAUDE_DIR"
+    mkdir -p "$CLAUDE_DIR/plugins/cache" \
+             "$CLAUDE_DIR/output-styles" \
+             "$CLAUDE_DIR/sessions" \
+             "$CLAUDE_DIR/projects" \
+             "$CLAUDE_DIR/cache" \
+             "$CLAUDE_DIR/backups" \
+             "$CLAUDE_DIR/session-env" \
+             "$CLAUDE_DIR/shell-snapshots" \
+             "$CLAUDE_DIR/telemetry" \
+             "$CLAUDE_DIR/plans"
+    # Ensure .claude.json exists (Claude Code expects it)
+    [[ -f "$CLAUDE_JSON" ]] || echo '{}' > "$CLAUDE_JSON"
+}
+
+# ─── Subcommands ──────────────────────────────────────────────────────────────
+do_build() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local containerfile=""
+    if [[ -f "$script_dir/Containerfile" ]]; then
+        containerfile="$script_dir/Containerfile"
+    elif [[ -f "./Containerfile" ]]; then
+        containerfile="./Containerfile"
+    else
+        die "Containerfile not found in $script_dir or current directory"
+    fi
+    info "Building $CLAUDE_BOX_IMAGE from $(dirname "$containerfile")/Containerfile"
+    podman build -t "$CLAUDE_BOX_IMAGE" -f "$containerfile" "$(dirname "$containerfile")" "$@"
+}
+
+do_update() {
+    info "Rebuilding with --no-cache to pull latest Claude Code"
+    do_build --no-cache
+}
+
+do_migrate() {
+    if ! podman volume exists claude-data 2>/dev/null; then
+        die "No 'claude-data' volume found — nothing to migrate"
+    fi
+    ensure_host_dirs
+    info "Migrating from claude-data volume to $CLAUDE_DIR/"
+    podman run --rm \
+        --user node \
+        --userns=keep-id \
+        --group-add keep-groups \
+        --annotation run.oci.keep_original_groups=1 \
+        -v "claude-data:/source:ro,Z" \
+        -v "$CLAUDE_DIR:/target:Z" \
+        --entrypoint /bin/bash \
+        "$CLAUDE_BOX_IMAGE" \
+        -c 'cp -a /source/.claude/. /target/ 2>/dev/null; echo "Migration complete"'
+    info "Data migrated to $CLAUDE_DIR/"
+    info "You can remove the old volume with: podman volume rm claude-data"
+}
+
+do_shell() {
+    ensure_host_dirs
+    exec podman run --rm -it \
+        --user node \
+        --userns=keep-id \
+        --group-add keep-groups \
+        --annotation run.oci.keep_original_groups=1 \
+        --security-opt no-new-privileges \
+        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z" \
+        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z" \
+        -v "$PWD:$PWD:rw,z" \
+        "${EXTRA_MOUNT_ARGS[@]}" \
+        -e "HOME=$CONTAINER_HOME" \
+        -w "$PWD" \
+        --entrypoint /bin/bash \
+        "$CLAUDE_BOX_IMAGE"
+}
+
+# ─── Main Container Run ──────────────────────────────────────────────────────
+run_claude() {
+    ensure_host_dirs
+
+    # Mount the real host CWD at the SAME path inside the container.
+    # This ensures Claude Code stores project sessions under the real host path
+    # (e.g. projects/-srv-ai-projects-foo/) so the VSCodium extension — which
+    # reads ~/.claude/ directly on the host — finds the same session files.
+    local host_cwd="$PWD"
+
+    # Two critical mounts for shared state:
+    #   ~/.claude/     → /home/node/.claude/     (sessions, projects, plugins)
+    #   ~/.claude.json → /home/node/.claude.json (auth, project index, config)
+    # Both the extension's native binary and our container read/write these.
+    local -a common_args=(
+        --rm
+        --user node
+        --userns=keep-id
+        --group-add keep-groups
+        --annotation run.oci.keep_original_groups=1
+        --security-opt no-new-privileges
+        -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z"
+        -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z"
+        -v "$host_cwd:$host_cwd:rw,z"
+        "${EXTRA_MOUNT_ARGS[@]}"
+        -e "HOME=$CONTAINER_HOME"
+        -w "$host_cwd"
+        "$CLAUDE_BOX_IMAGE"
+    )
+
+    if [[ -t 0 && -t 1 ]]; then
+        # Interactive terminal — allocate TTY
+        exec podman run -it "${common_args[@]}" "$@"
+    else
+        # Non-interactive (VSCodium pipe, script, etc.) — stdin only, no TTY
+        exec podman run -i "${common_args[@]}" "$@"
+    fi
+}
+
+# ─── Entry Point ──────────────────────────────────────────────────────────────
+main() {
+    # Handle our own subcommands first
+    case "${1:-}" in
+        --help|-h)     show_help ;;
+        --build)       shift; do_build "$@"; exit ;;
+        --update)      shift; do_update "$@"; exit ;;
+        --migrate)     do_migrate; exit ;;
+        --shell)       do_shell; exit ;;
+        --version)
+            ensure_host_dirs
+            podman run --rm \
+                --user node \
+                --userns=keep-id \
+                --group-add keep-groups \
+                --annotation run.oci.keep_original_groups=1 \
+                -v "$CLAUDE_DIR:$CONTAINER_HOME/.claude:Z" \
+                -v "$CLAUDE_JSON:$CONTAINER_HOME/.claude.json:Z" \
+                -e "HOME=$CONTAINER_HOME" \
+                "$CLAUDE_BOX_IMAGE" --version
+            exit
+            ;;
+    esac
+
+    # VSCodium wrapper mode: strip the native binary path if present.
+    # The extension calls: claude-box /path/to/native/claude [args...]
+    # We discard the native binary and use the containerized claude instead.
+    local -a args=()
+    if [[ $# -gt 0 && "$1" == *"/claude" && "$1" != "--"* ]]; then
+        shift
+        args=("$@")
+    else
+        args=("$@")
+    fi
+
+    run_claude "${args[@]}"
+}
+
+main "$@"

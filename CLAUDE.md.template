@@ -1,0 +1,24 @@
+## Execution environment
+
+Claude runs inside a rootless Podman container via the claude-box wrapper (see CLAUDE.local.md).
+The repo is bind-mounted to the exact same absolute path as on the host. Host paths outside this mount are unavailable.
+
+**# You cannot run benchmarks. You read and write repo files only.**
+
+**Python 3.11.x is available with the following packages:** `pydantic`, `httpx`, `pyyaml`, `rich`, `openai`, `ruff`, `pytest` — plus full stdlib.
+
+Claude Code MAY use Python for:
+- Parsing `results/*/metrics.json` with `json` + `pathlib` or `pydantic` schemas
+- Parsing `config/models.yaml` / `config/thresholds.yaml` with `pyyaml`
+- Generating `summary.md` tables with `rich`
+- Running `pytest` on `lib/` unit tests after making changes
+- Running `ruff check .` to lint before handing back to operator
+
+**The container CANNOT:**
+- Talk to the GPU
+- Activate the host `hf` pyenv or any host venv
+- Run benchmarks (`infra/scripts/deploy.sh` invokes `podman compose` — host only)
+- Execute `just` targets that call deploy scripts
+- Reach vLLM endpoints — ports 30000–30002 are host-side only, connection will be refused
+
+Running benchmarks is the operator's job.
