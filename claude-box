@@ -118,7 +118,6 @@ do_migrate() {
     ensure_host_dirs
     info "Migrating from claude-data volume to $CLAUDE_DIR/"
     podman run --rm \
-        --user node \
         --userns=keep-id \
         --group-add keep-groups \
         --annotation run.oci.keep_original_groups=1 \
@@ -134,7 +133,6 @@ do_migrate() {
 do_shell() {
     ensure_host_dirs
     exec podman run --rm -it \
-        --user node \
         --userns=keep-id \
         --group-add keep-groups \
         --annotation run.oci.keep_original_groups=1 \
@@ -153,6 +151,9 @@ do_shell() {
 run_claude() {
     ensure_host_dirs
 
+    echo "[$(date)] run_claude invoked with args: $*" >> /tmp/claude-box-debug.log
+    echo "[$(date)] PWD: $PWD" >> /tmp/claude-box-debug.log
+
     # Mount the real host CWD at the SAME path inside the container.
     # This ensures Claude Code stores project sessions under the real host path
     # (e.g. projects/-srv-ai-projects-foo/) so the VSCodium extension — which
@@ -165,7 +166,6 @@ run_claude() {
     # Both the extension's native binary and our container read/write these.
     local -a common_args=(
         --rm
-        --user node
         --userns=keep-id
         --group-add keep-groups
         --annotation run.oci.keep_original_groups=1
@@ -190,6 +190,8 @@ run_claude() {
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 main() {
+    echo "[$(date)] main invoked with args: $*" >> /tmp/claude-box-debug.log
+
     # Handle our own subcommands first
     case "${1:-}" in
         --help|-h)     show_help ;;
@@ -200,7 +202,6 @@ main() {
         --version)
             ensure_host_dirs
             podman run --rm \
-                --user node \
                 --userns=keep-id \
                 --group-add keep-groups \
                 --annotation run.oci.keep_original_groups=1 \
