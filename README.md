@@ -184,3 +184,4 @@ claude-box --version
 | `CLAUDE_DIR` | `~/.claude` | Host directory for persistent data |
 | `CLAUDE_JSON` | `~/.claude.json` | Host config/auth file |
 | `CLAUDE_BOX_MOUNTS`| _(empty)_ | Space-separated list of extra volumes to mount (e.g., `/foo:/foo:rw,z /bar:/bar:ro,z`) |
+| `CLAUDE_BOX_DEBUG` | `0` | Set to `1` to generate a randomized user-specific debug log file in `/tmp/` |
