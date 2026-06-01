@@ -13,6 +13,7 @@ set -euo pipefail
 # ─── Configuration ────────────────────────────────────────────────────────────
 CLAUDE_BOX_IMAGE="${CLAUDE_BOX_IMAGE:-claude-sandbox:latest}"
 CONTAINER_HOME="/home/node"
+CLAUDE_BOX_DEBUG="${CLAUDE_BOX_DEBUG:-0}"
 
 # Two host paths that Claude Code uses:
 #   ~/.claude/       — directory with sessions, projects, plugins, etc.
@@ -36,6 +37,16 @@ fi
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 info() { printf '\033[1;34m→\033[0m %s\n' "$*" >&2; }
 
+if [[ "$CLAUDE_BOX_DEBUG" == "1" ]]; then
+    export CLAUDE_BOX_DEBUG_FILE="${CLAUDE_BOX_DEBUG_FILE:-$(mktemp /tmp/claude-box-debug-${USER}-XXXXXX.log)}"
+fi
+
+debug_log() {
+    if [[ "$CLAUDE_BOX_DEBUG" == "1" && -n "${CLAUDE_BOX_DEBUG_FILE:-}" ]]; then
+        echo "[$(date)] $*" >> "$CLAUDE_BOX_DEBUG_FILE"
+    fi
+}
+
 show_help() {
     cat <<'EOF'
 claude-box — Run Claude Code in a rootless Podman sandbox
@@ -57,6 +68,7 @@ ENVIRONMENT
     CLAUDE_DIR          Host .claude directory   (default: ~/.claude)
     CLAUDE_JSON         Host .claude.json file   (default: ~/.claude.json)
     CLAUDE_BOX_MOUNTS   Extra volume mounts      (default: none, e.g. "/path:/path:rw,z")
+    CLAUDE_BOX_DEBUG    Enable debug logging     (default: 0)
 
 EXAMPLES
     claude-box                  # Interactive session in current project
@@ -151,8 +163,8 @@ do_shell() {
 run_claude() {
     ensure_host_dirs
 
-    echo "[$(date)] run_claude invoked with args: $*" >> /tmp/claude-box-debug.log
-    echo "[$(date)] PWD: $PWD" >> /tmp/claude-box-debug.log
+    debug_log "run_claude invoked with args: $*"
+    debug_log "PWD: $PWD"
 
     # Mount the real host CWD at the SAME path inside the container.
     # This ensures Claude Code stores project sessions under the real host path
@@ -190,7 +202,7 @@ run_claude() {
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 main() {
-    echo "[$(date)] main invoked with args: $*" >> /tmp/claude-box-debug.log
+    debug_log "main invoked with args: $*"
 
     # Handle our own subcommands first
     case "${1:-}" in
